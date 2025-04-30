@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -11,7 +12,8 @@ namespace MassPrint.Services
 {
     internal static class WordService
     {
-        internal static async Task PrintDocument(IEnumerable<string> paths, IProgress<(int, int)> progress)
+        private const string CLEAR_NAME = "clear.doc";
+        internal static async Task PrintDocument(IEnumerable<string> paths, IProgress<(int, int)> progress, CancellationToken token)
         {
             string printerName = "";
             bool accept = false;
@@ -42,21 +44,42 @@ namespace MassPrint.Services
                 {
                     foreach (var path in paths)
                     {
-                        var document = wordApp.Documents.Open(Path.Combine(Environment.CurrentDirectory, path));
-                        document.PrintOut();
-                        document.Close(false);
-                        progress?.Report((2, ++counter));
+                        token.ThrowIfCancellationRequested(); // Добавить сюда
+                        Word.Document document = null;
+                        try
+                        {
+                            document = wordApp.Documents.Open(Path.Combine(Environment.CurrentDirectory, path));
+                            document.PrintOut();
+                        }
+                        catch
+                        {
+                            throw;
+                        }
+                        finally
+                        {
+                            document?.Close(false);
+                        }
+                        progress?.Report((3, ++counter));
                     }
-
                 }
                 finally
                 {
                     wordApp.Quit();
                 }
             }
+            else
+            {
+                foreach (var path in paths)
+                {
+                    if (File.Exists(path))
+                    {
+                        File.Delete(path);
+                    }
+                }
+            }
         } 
 
-        internal static void JoinDocuments(IEnumerable<string> paths, string folderPath, IProgress<(int, int)> progress)
+        internal static async Task JoinDocumentsAndPrint(ICollection<string> paths, string folderPath, IProgress<(int, int)> progress, CancellationToken token)
         {
             int counter = 0;
             var wordApp = new Word.Application()
@@ -64,25 +87,35 @@ namespace MassPrint.Services
                 Visible = false,
                 DisplayAlerts = Word.WdAlertLevel.wdAlertsNone
             };
-            var mainDoc = wordApp.Documents.Open(folderPath);
+
+            var mainDoc = wordApp.Documents.Add();
 
             try
             {
 
                 foreach (var path in paths)
                 {
+                    token.ThrowIfCancellationRequested(); // Добавить сюда
                     mainDoc.Application.Selection.EndKey(Word.WdUnits.wdStory);
                     mainDoc.Application.Selection.InsertFile(Path.Combine(Environment.CurrentDirectory, path));
                     progress?.Report((2, ++counter));
                 }
 
-                mainDoc.Save();
+                mainDoc.SaveAs2(Path.Combine(Environment.CurrentDirectory, CLEAR_NAME));
+                mainDoc.Close(false);
+                wordApp.Quit();
+                await PrintDocument(new List<string>() { Path.Combine(Environment.CurrentDirectory, CLEAR_NAME) }, progress, token);
 
+            }
+            catch (Exception e)
+            {
+                mainDoc.Close(false);
+                wordApp.Quit();
+                throw;
             }
             finally
             {
-                mainDoc.Close();
-                wordApp.Quit();
+                paths.Add(Path.Combine(Environment.CurrentDirectory, CLEAR_NAME));
                 RemoveAllFiles(paths);
             }
         }

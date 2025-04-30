@@ -8,12 +8,15 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Documents;
 using System.Windows.Forms;
 using System.Windows.Input;
+using System.Windows.Markup;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
@@ -32,6 +35,8 @@ namespace RadugaMassPrint
         private static readonly Dictionary<string, string> operators = _configure.GetSection("Operators")
                                                                    .GetChildren()
                                                                    .ToDictionary(section => section.Key, section => section.Value);
+
+        private CancellationTokenSource CancellationTokenSource;
         public MainWindow()
         {
             InitializeComponent();
@@ -46,12 +51,54 @@ namespace RadugaMassPrint
 
             foreach (var documentType in documentTypes)
             {
-                documentTypesUniformGrid.Children.Add( new WPF.CheckBox()
+                var cb = new WPF.CheckBox()
                 {
+
                     Content = documentType.Value,
                     Tag = documentType.Key,
                     Margin = new Thickness(5)
-                });
+                };
+
+                cb.Checked += CheckBox_Checked;
+                cb.Unchecked += CheckBox_Unchecked;
+
+                documentTypesUniformGrid.Children.Add(cb);
+            }
+        }
+
+        private void CheckBox_Checked(object sender, RoutedEventArgs args)
+        {
+            if (sender is WPF.CheckBox cb && cb != null)
+            {
+                if (int.Parse(cb.Tag.ToString()) == 63)
+                {
+                    var kTVCb = documentTypesUniformGrid.Children.OfType<WPF.CheckBox>().First(cb => int.Parse(cb.Tag.ToString()) == 71);
+                    kTVCb.IsEnabled = false;
+                    kTVCb.IsChecked = false;
+                }
+                else if (int.Parse(cb.Tag.ToString()) == 71)
+                {
+                    var domofonCB = documentTypesUniformGrid.Children.OfType<WPF.CheckBox>().First(cb => int.Parse(cb.Tag.ToString()) == 63);
+                    domofonCB.IsChecked = false;
+                    domofonCB.IsEnabled = false;
+                }
+            }
+        }
+
+        private void CheckBox_Unchecked(object sender, RoutedEventArgs args)
+        {
+            if (sender is WPF.CheckBox cb && cb != null)
+            {
+                if (int.Parse(cb.Tag.ToString()) == 63)
+                {
+                    var kTVCb = documentTypesUniformGrid.Children.OfType<WPF.CheckBox>().First(cb => int.Parse(cb.Tag.ToString()) == 71);
+                    kTVCb.IsEnabled = true;
+                }
+                else if (int.Parse(cb.Tag.ToString()) == 71)
+                {
+                    var domofonCB = documentTypesUniformGrid.Children.OfType<WPF.CheckBox>().First(cb => int.Parse(cb.Tag.ToString()) == 63);
+                    domofonCB.IsEnabled = true;
+                }
             }
         }
 
@@ -80,11 +127,13 @@ namespace RadugaMassPrint
 
         private async void PrintButton_Click(object sender, RoutedEventArgs e)
         {
+            CancellationTokenSource = new CancellationTokenSource();
             try
             {
                 if (sender is WPF.Button bt)
                 {
                     bt.IsEnabled = false;
+                    CancelButton.IsEnabled = true;
                 }
 
                 var docIds = documentTypesUniformGrid.Children.OfType<WPF.CheckBox>().Where(cb => cb.IsChecked == true).Select(cb => int.Parse(cb.Tag.ToString()!)).ToList();
@@ -104,22 +153,38 @@ namespace RadugaMassPrint
                     return;
                 }
 
-                if (string.IsNullOrEmpty(FoldersName.Text))
-                {
-                    System.Windows.MessageBox.Show("Необходимо выбрать папку для формирования документов", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
-                    return;
-                }
+                //if (string.IsNullOrEmpty(FoldersName.Text))
+                //{
+                //    System.Windows.MessageBox.Show("Необходимо выбрать папку для формирования документов", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
+                //    return;
+                //}
 
                 using (var mySqlManager = new MySqlManager(_configure.GetConnectionString("Billing")!))
                 {
                     IEnumerable<DocumentData> documentDatas = await mySqlManager.GetFilesFolder(docIds, dateFrom!.Value, operators, int.Parse(accType));
+
+                    var packDocs = documentDatas.Where(dd => dd.AgreementNumber.Contains('П')).Select(dd => dd.AgrmID).ToList();
+                    documentDatas = documentDatas.Where(dd => !packDocs.Contains(dd.AgrmID)).ToList();
+
+                    if (docIds.Contains(63))
+                    {
+                        var docs = documentDatas.Where(dd => dd.DocID == 63 && !dd.AgreementNumber.Contains('Д')).Select(dd => dd.AgrmID).ToList();
+                        documentDatas = documentDatas.Where(dd => !docs.Contains(dd.AgrmID)).ToList();
+                    }
+
+                    if (docIds.Contains(71))
+                    {
+                        var docs = documentDatas.Where(dd => dd.DocID == 71 && !dd.AgreementNumber.Contains("ТВ")).Select(dd => dd.AgrmID).ToList();
+                        documentDatas = documentDatas.Where(dd => !docs.Contains(dd.AgrmID)).ToList();
+                    }
 
                     if (int.Parse(accType) == 2)
                     {
                         documentDatas = documentDatas.OrderBy(dd =>
                         {
                             var addressParts = (dd.Address ?? "").Split(',');
-                            return string.Join(",", addressParts.Where((part, index) => index != 4));
+
+                            return string.Join(",", addressParts.Take(6));
                         })
                                                       .ThenBy(dd =>
                                                       {
@@ -172,36 +237,107 @@ namespace RadugaMassPrint
 
                             int completed = 0;
 
-
-                            foreach (var documentData in documentDatas)
+                            try
                             {
-                                string filePath = Regex.Match(documentData.FileName, @"[^/\\]+$", RegexOptions.None).Value;
-                                using (var fileStream = new FileStream(filePath, FileMode.Create))
+
+                                foreach (var documentData in documentDatas)
                                 {
-                                    sftp.DownloadFile(documentData.FileName, fileStream);
+                                    string filePath = Regex.Match(documentData.FileName, @"[^/\\]+$", RegexOptions.None).Value;
+                                    using (var fileStream = new FileStream(filePath, FileMode.Create))
+                                    {
+                                        // Создаем задачу для скачивания файла
+                                        var downloadTask = Task.Run(() =>
+                                        {
+                                            // Проверка на отмену перед скачиванием
+                                            CancellationTokenSource.Token.ThrowIfCancellationRequested();
+                                            sftp.DownloadFile(documentData.FileName, fileStream);
+                                        }, CancellationTokenSource.Token);
+
+                                        try
+                                        {
+                                            // Ожидаем завершения задачи
+                                            await downloadTask;
+                                        }
+                                        catch (OperationCanceledException)
+                                        {
+                                            await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
+                                            {
+                                                ProgressTextBlock.Text = "Отмена пользователем";
+                                            });
+                                            return;
+                                        }
+                                    }
+
+                                    (progress as IProgress<(int, int)>)?.Report((1, ++completed));
+
                                 }
 
-                                (progress as IProgress<(int, int)>)?.Report((1, ++completed));
 
+                                var downLoadTask = Task.Run(async () =>
+                                {
+                                    if (docIds.Count == 1 && docIds[0] == 85)
+                                    {
+
+                                        string folderName = "";
+                                        //await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
+                                        //{
+                                        //    folderName = FoldersName.Text;
+                                        //});
+                                        await WordService.JoinDocumentsAndPrint(documentDatas.Select(dd => Regex.Match(dd.FileName, @"[^/\\]+$", RegexOptions.None).Value).ToList(), folderName, progress, CancellationTokenSource.Token);
+                                    }
+                                    else
+                                    {
+                                        await WordService.PrintDocument(documentDatas.Select(dd => Regex.Match(dd.FileName, @"[^/\\]+$", RegexOptions.None).Value), progress, CancellationTokenSource.Token);
+                                    }
+                                }, CancellationTokenSource.Token);
+
+                                try
+                                {
+                                    // Ожидаем завершения задачи
+                                    await downLoadTask;
+                                }
+                                catch (OperationCanceledException)
+                                {
+                                    await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
+                                    {
+                                        ProgressTextBlock.Text = "Отмена пользователем";
+                                    });
+                                    return;
+                                }
                             }
-
-
-                            if (docIds.Count == 1 && docIds[0] == 85)
+                            catch (OperationCanceledException)
                             {
-                                string folderName = "";
                                 await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
                                 {
-                                    folderName = FoldersName.Text;
+                                    ProgressTextBlock.Text = "Отмена пользователем";
                                 });
-                                WordService.JoinDocuments(documentDatas.Select(dd => Regex.Match(dd.FileName, @"[^/\\]+$", RegexOptions.None).Value),folderName, progress);
                             }
-                            else
+
+                            catch (Exception e)
                             {
-                                await WordService.PrintDocument(documentDatas.Select(dd => Regex.Match(dd.FileName, @"[^/\\]+$", RegexOptions.None).Value), progress);
+                                await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
+                                {
+                                    System.Windows.MessageBox.Show(e.Message, "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
+                                    ProgressTextBlock.Text = $"Ошибка - {e.Message}";
+                                });
+
+                            }
+                            finally
+                            {
+                                foreach (var documentData in documentDatas)
+                                {
+                                    string filePath = Regex.Match(documentData.FileName, @"[^/\\]+$", RegexOptions.None).Value;
+                                    if (File.Exists(System.IO.Path.Combine(Environment.CurrentDirectory, filePath)))
+                                    {
+                                        File.Delete(System.IO.Path.Combine(Environment.CurrentDirectory, filePath));
+                                    }
+                                }
                             }
                         }
-                    });
+                    }, CancellationTokenSource.Token);
 
+                    ProgressTextBlock.Text = "Готово";
+                    DocumentsProgressBar.Value = 0;
                 }
             }
             catch(Exception ex)
@@ -213,27 +349,38 @@ namespace RadugaMassPrint
                 if (sender is WPF.Button bt)
                 {
                     bt.IsEnabled = true;
+                    CancelButton.IsEnabled = false;
                 }
             }
         }
 
-        private void SelectFolder_Click(object sender, RoutedEventArgs e)
+        private void Cancel_Click(object sender, RoutedEventArgs e)
         {
-            using var saveFileDialog = new OpenFileDialog()
+            CancellationTokenSource?.Cancel();
+            if (sender is WPF.Button bt)
             {
-                Filter = "Word Documents (*.doc;*.docx)|*.doc;*.docx",
-                FileName = "NewDocument.doc"
-            };
-
-            if (saveFileDialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
-            {
-                if (!File.Exists(saveFileDialog.FileName))
-                {
-                    File.Create(saveFileDialog.FileName);
-                }
-
-                FoldersName.Text = saveFileDialog.FileName;
+                bt.IsEnabled = false;
+                printButton.IsEnabled = true;
             }
         }
+
+        //private void SelectFolder_Click(object sender, RoutedEventArgs e)
+        //{
+        //    using var saveFileDialog = new OpenFileDialog()
+        //    {
+        //        Filter = "Word Documents (*.doc;*.docx)|*.doc;*.docx",
+        //        FileName = "NewDocument.doc"
+        //    };
+
+        //    if (saveFileDialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+        //    {
+        //        if (!File.Exists(saveFileDialog.FileName))
+        //        {
+        //            File.Create(saveFileDialog.FileName);
+        //        }
+
+        //        FoldersName.Text = saveFileDialog.FileName;
+        //    }
+        //}
     }
 }
