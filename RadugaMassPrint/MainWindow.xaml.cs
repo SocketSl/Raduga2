@@ -223,7 +223,7 @@ namespace RadugaMassPrint
                     DocumentsProgressBar.Value = 0;
                     DocumentsProgressBar.Maximum = documentDatas.Count();
 
-                    var progress = new Progress<(int level,int count)>( data =>
+                    var progress = new Progress<(int level, int count)>(data =>
                     {
                         ProgressTextBlock.Text = $"Этап {data.level} - {(data.level == 1 ? $"Скачено файлов {data.count} из {documentDatas.Count()}" : $"Сформировано/Печать {data.count} из {documentDatas.Count()}")}";
                         DocumentsProgressBar.Value = data.count;
@@ -275,7 +275,7 @@ namespace RadugaMassPrint
 
                                 var downLoadTask = Task.Run(async () =>
                                 {
-                                    if (docIds.Count == 1 && docIds[0] == 85)
+                                    if (docIds.Count == 1 && (docIds[0] == 85 || docIds[0] == 63 || docIds[0] == 71))
                                     {
 
                                         string folderName = "";
@@ -287,14 +287,14 @@ namespace RadugaMassPrint
                                     }
                                     else
                                     {
-                                        await WordService.PrintDocument(documentDatas.Select(dd => Regex.Match(dd.FileName, @"[^/\\]+$", RegexOptions.None).Value), progress, CancellationTokenSource.Token);
+                                        await WordService.JoinDocumentsWithPageBreakAndPrint(documentDatas.Select(dd => Regex.Match(dd.FileName, @"[^/\\]+$", RegexOptions.None).Value).ToList(), "", progress, CancellationTokenSource.Token);
                                     }
                                 }, CancellationTokenSource.Token);
 
                                 try
                                 {
                                     // Ожидаем завершения задачи
-                                    await downLoadTask;
+                                    await downLoadTask; // КТВ, домофон 
                                 }
                                 catch (OperationCanceledException)
                                 {
@@ -340,7 +340,7 @@ namespace RadugaMassPrint
                     DocumentsProgressBar.Value = 0;
                 }
             }
-            catch(Exception ex)
+            catch (Exception ex)
             {
                 System.Windows.MessageBox.Show(ex.Message, "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
             }
