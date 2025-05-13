@@ -52,6 +52,7 @@ namespace RadugaMassPrint
                             d.doc_id = 74
                             AND o.oper_id = 1
                         )
+                    AND a.state = 0
                 """;
 
             var sqlArg = new

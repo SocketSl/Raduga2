@@ -1,6 +1,7 @@
 ﻿using MassPrint.Services;
 using Microsoft.Extensions.Configuration;
 using RadugaMassPrint.Models;
+using RadugaMassPrint.Services;
 using Renci.SshNet;
 using System;
 using System.Collections.Generic;
@@ -178,7 +179,7 @@ namespace RadugaMassPrint
                         documentDatas = documentDatas.Where(dd => !docs.Contains(dd.AgrmID)).ToList();
                     }
 
-                    if (int.Parse(accType) == 2)
+                    if (int.Parse(accType) == 2) // ФЛ
                     {
                         documentDatas = documentDatas.OrderBy(dd =>
                         {
@@ -190,6 +191,18 @@ namespace RadugaMassPrint
                                                       {
                                                           var match = Regex.Match(dd.BuildingName ?? "", @"\d+", RegexOptions.IgnoreCase);
                                                           return match.Success ? int.Parse(match.Value) : 0;
+                                                      })
+                                                      .ThenBy(dd =>
+                                                      {
+                                                          var kv = (dd.Address ?? "").Split(',');
+                                                          int kvNumber = 0;
+                                                          if (kv.Length > 7)
+                                                          {
+                                                              var match = Regex.Match(kv[7], @"\d+", RegexOptions.IgnoreCase);
+                                                              kvNumber = match.Success ? int.Parse(match.Value) : 0;
+                                                          }
+                                                          return kvNumber;
+                                                          
                                                       })
                                                      .ThenBy(dd => dd.AccountName)
                                                      .ThenBy(dd => dd.AgrmID)
@@ -275,7 +288,7 @@ namespace RadugaMassPrint
 
                                 var downLoadTask = Task.Run(async () =>
                                 {
-                                    if (docIds.Count == 1 && (docIds[0] == 85 || docIds[0] == 63 || docIds[0] == 71))
+                                    if (docIds.Count == 1 && (docIds[0] == 85 || docIds[0] == 63 || docIds[0] == 71)) // КТВ, домофон 
                                     {
 
                                         string folderName = "";
@@ -283,18 +296,26 @@ namespace RadugaMassPrint
                                         //{
                                         //    folderName = FoldersName.Text;
                                         //});
-                                        await WordService.JoinDocumentsAndPrint(documentDatas.Select(dd => Regex.Match(dd.FileName, @"[^/\\]+$", RegexOptions.None).Value).ToList(), folderName, progress, CancellationTokenSource.Token);
+                                        
+                                        if (System.IO.Path.GetExtension(documentDatas.First().FileName) == ".html")
+                                        {
+                                            HTMLService.JoinDocuments(documentDatas, progress, CancellationTokenSource.Token);
+                                        }
+                                        else
+                                        {
+                                            await WordService.JoinDocumentsAndPrint(documentDatas, "", progress, CancellationTokenSource.Token);
+                                        }
                                     }
                                     else
                                     {
-                                        await WordService.JoinDocumentsWithPageBreakAndPrint(documentDatas.Select(dd => Regex.Match(dd.FileName, @"[^/\\]+$", RegexOptions.None).Value).ToList(), "", progress, CancellationTokenSource.Token);
+                                        await WordService.JoinDocumentsWithPageBreakAndPrint(documentDatas, "", progress, CancellationTokenSource.Token);
                                     }
                                 }, CancellationTokenSource.Token);
 
                                 try
                                 {
                                     // Ожидаем завершения задачи
-                                    await downLoadTask; // КТВ, домофон 
+                                    await downLoadTask; 
                                 }
                                 catch (OperationCanceledException)
                                 {
