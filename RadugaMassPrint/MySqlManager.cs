@@ -21,7 +21,7 @@ namespace RadugaMassPrint
         internal async Task<IEnumerable<DocumentData>> GetFilesFolder(IEnumerable<int> docs_id, DateTime dateFrom, IEnumerable<int> operators, int accountType)
         {
             string sqlCommand =
-                """
+                $"""
                 SELECT 
                     d.name as DocumentName,
                     aa.address as Address,
@@ -39,8 +39,15 @@ namespace RadugaMassPrint
                 JOIN accounts_addr aa on aa.uid = ac.uid
                 JOIN documents d on d.doc_id = o.doc_id
                 LEFT OUTER JOIN address_building ab on aa.building = ab.record_id
+                LEFT OUTER JOIN agreements_addons_vals aav 
+                    on aav.agrm_id = o.agrm_id
+                    and aav.name in ('detailing', 'transcript')
+                    and aav.str_value = 'Да'
                 WHERE 
-                    o.doc_id in @docs_id
+                    (
+                        o.doc_id in @docs_id
+                        { (docs_id.Count() >= 2 ? "or (o.doc_id in (67,68) and aav.agrm_id is not null)" : "") }
+                    )
                     AND aa.type = 2
                     AND ifnull(o.file_name, '') != ''
                     AND o.period >= @dateStart
